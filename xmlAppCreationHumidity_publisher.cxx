@@ -41,7 +41,7 @@ On Windows:
 objs\<arch>\xmlAppCreationHumidity_publisher <domain_id>  
 objs\<arch>\xmlAppCreationHumidity_subscriber <domain_id>   
 */
-
+#include<random>
 #include <iostream>
 
 #include <dds/pub/ddspub.hpp>
@@ -56,48 +56,122 @@ objs\<arch>\xmlAppCreationHumidity_subscriber <domain_id>
 
 #include "xmlAppCreationHumidity.hpp"
 
+
+
+
+class PercisionCommandReaderListener : public dds::sub::NoOpDataReaderListener<PercisionCommand> {
+public:
+
+
+	PercisionCommandReaderListener(PercisionCommand* pointerToData) : count_(0)
+	{
+		recentDataHolder = pointerToData;
+	}
+
+	void on_data_available(dds::sub::DataReader<PercisionCommand>& reader)
+	{
+		// Take all samples
+		dds::sub::LoanedSamples<PercisionCommand> samples = reader.take();
+
+		for (dds::sub::LoanedSamples<PercisionCommand>::iterator sample_it = samples.begin();
+			sample_it != samples.end(); sample_it++) {
+
+			if (sample_it->info().valid()) {
+				count_++;
+				recentData = (sample_it->data());
+				*recentDataHolder = recentData;
+				std::cout << sample_it->data() << std::endl;
+			}
+		}
+	}
+
+	int count() const
+	{
+		return count_;
+	}
+
+	PercisionCommand recentData;	// A place to hold the pointer to send
+	PercisionCommand *recentDataHolder;
+private:
+
+	int count_;
+};
+
+
+
 void publisher_main(int domain_id, int sample_count)
 {
-	/*
-    // Create a DomainParticipant with default Qos
-    dds::domain::DomainParticipant participant (domain_id);
-	*/
+	//Reading everything form the XML
 	auto eladQosProvider = dds::core::QosProvider("mySystemProfiles.xml");
 	rti::core::QosProviderParams provider_params;
-	// Configure the default QosProvider to load the configuration
-	// config_file == "/the/path/to/your/xml/configuration.xml"
-	/*
-	provider_params.url_profile(dds::core::StringSeq(1, "mySystemProfiles.xml"));
-	dds::core::QosProvider::Default()->default_provider_params(provider_params);	
-	*/
+
 	// When using user-generated types, you must register the type with RTI 
 // Connext DDS before creating the participants and the rest of the entities
 // in your system 
 	rti::domain::register_type<HumidityInfo>("HumidityInfo");
 	rti::domain::register_type<PercisionCommand>("PercisionCommand");
 
-	auto participant = dds::core::QosProvider::Default()->create_participant_from_config("XmlAppDPLib::XmlAppPublisherDP");
+	//Create participant using eladQosProvider instead of dds::core::QosProvider::Default()
+	auto participant = eladQosProvider->create_participant_from_config("XmlAppDPLib::XmlAppPublisherDP");
 
+	//create a data writer
 	dds::pub::DataWriter<HumidityInfo> writer = rti::pub::find_datawriter_by_name<dds::pub::DataWriter<HumidityInfo>>(
 		participant,
 		"HumidityPublisher::HumidityDw");
-	/*
-    // Create a Topic -- and automatically register the type
-    dds::topic::Topic<HumidityInfo> topic (participant, "Example HumidityInfo");
-	*/
+
+	//Creating data reader
+	dds::sub::DataReader<PercisionCommand> reader = rti::sub::find_datareader_by_name<dds::sub::DataReader<PercisionCommand>>(
+		participant,
+		"PrecisionSubscriber::PercisionDR"
+		);
 
 
 
+	//Create a  'PercisionCommand' variable and a pointer to that variable.
+//The purpose: to enable access from the listener. 
+	PercisionCommand percision;		//Will hold the most recent resolution (LOW or HIGH)
+	percision.requestedResolution(Resolution::LOW); //Initialize the resolution.
+	PercisionCommand* pointerToLastDataRecieved = &percision;	//Create a pointer to 'percision'
+	
+																//Create a listener
+	PercisionCommandReaderListener listener(pointerToLastDataRecieved);
+	reader->listener(&listener, dds::core::status::StatusMask::data_available());
+
+
+	short intRandomHumidity;
+
+
+
+
+
+	//creating a random generator
+	std::default_random_engine generator;
+	std::uniform_int_distribution<short> distributionForFloat(0, 10000);
+	std::uniform_int_distribution<short> distributionForInt(0, 100);
 
     HumidityInfo sample;
-    for (int count = 0; count < sample_count || sample_count == 0; count++) {
-        // Modify the data to be written here
+	for (int count = 0; count < sample_count || sample_count == 0; count++) {
+		// Modify the data to be written here
 
-        std::cout << "Writing HumidityInfo, count " << count << std::endl;
-        writer.write(sample);
+		//When the requested resolution is HIGH:
+		if ((pointerToLastDataRecieved->requestedResolution()) == Resolution::HIGH)
+		{
+			//Generate a float number in the range [0.00,100.00]
+			intRandomHumidity = (short)distributionForFloat(generator);
+			sample.humidity().floatHumidity(((float)intRandomHumidity) / 100);
 
-        rti::util::sleep(dds::core::Duration(4));
-    }
+		}
+		else  //When the requested resolution is LOW:
+		{
+			//Generate a short int number in the range [0,100]
+			sample.humidity().shortHumidity(((short)distributionForInt(generator)));
+		}
+
+		std::cout << "Writing ResolutionCommand, count " << count << std::endl;
+		writer.write(sample);
+
+		rti::util::sleep(dds::core::Duration(1));
+	}
 }
 
 int main(int argc, char *argv[])

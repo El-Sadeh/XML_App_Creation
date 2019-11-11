@@ -50,9 +50,12 @@ objs\<arch>\xmlAppCreationHumidity_subscriber <domain_id>
 #include <dds/core/ddscore.hpp>
 // Or simply include <dds/dds.hpp> 
 
+#include <dds/sub/DataReader.hpp>
+#include <dds/sub/find.hpp>
+#include <dds/pub/DataWriter.hpp>
+#include <dds/pub/find.hpp>
 
 #include <dds/core/QosProvider.hpp>
-#include <dds/sub/DataReader.hpp>
 
 #include "xmlAppCreationHumidity.hpp"
 
@@ -89,21 +92,45 @@ class HumidityInfoReaderListener : public dds::sub::NoOpDataReaderListener<Humid
 
 void subscriber_main(int domain_id, int sample_count)
 {
+	//registering types:
 	rti::domain::register_type<HumidityInfo>("HumidityInfo");
 	rti::domain::register_type<PercisionCommand>("PercisionCommand");
-	
-	auto participant = dds::core::QosProvider::Default()->create_participant_from_config("XmlAppDPLib::XmlAppsubscriberDP");
+
+	//Reading everything from the XML
+	auto eladQosProvider = dds::core::QosProvider("mySystemProfiles.xml");
+	//Create participant using eladQosProvider instead of dds::core::QosProvider::Default()
+	auto participant = eladQosProvider->create_participant_from_config("XmlAppDPLib::XmlAppsubscriberDP");
+
+	//Creating data reader
 	dds::sub::DataReader<HumidityInfo> reader = rti::sub::find_datareader_by_name<dds::sub::DataReader<HumidityInfo>>(
 		participant,
 		"HumiditySubscriber::HumidityDR"
 		);
+
+	//create a data writer
+	dds::pub::DataWriter<PercisionCommand> writer = 
+		rti::pub::find_datawriter_by_name<dds::pub::DataWriter<PercisionCommand>>(
+		participant,
+		"PecisionPublisher::PecisionDW");
+
+	   
+
+
+	PercisionCommand command;
 	HumidityInfoReaderListener listener;
+	int counter = 0;
 	reader->listener(&listener, dds::core::status::StatusMask::data_available());
 
     while (listener.count() < sample_count || sample_count == 0) {
-        std::cout << "HumidityInfo subscriber sleeping for 4 sec..." << std::endl;
+		std::cout << "ResolutionCommand subscriber sleeping for 4 sec..." << std::endl;
+		if ((counter % 2) == 0)
+			command.requestedResolution(Resolution::LOW);
+		else
+			command.requestedResolution(Resolution::HIGH);
+		counter++;
+		writer.write(command);
 
-        rti::util::sleep(dds::core::Duration(4));
+		rti::util::sleep(dds::core::Duration(4));
     }
 
     // Unset the listener to allow the reader destruction
